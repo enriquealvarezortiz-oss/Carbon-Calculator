@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import io
+import time
 from math import radians, cos, sin, asin, sqrt
 from geopy.geocoders import Nominatim
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Global Carbon Calculator", layout="wide")
-st.title("🌍 Global Logistics Carbon Calculator")
+st.title("Vector Global Logistics Carbon Calculator")
 st.write("Upload your shipment CSVs to automatically calculate your global CO₂e emissions.")
 
 # --- 1. CONSTANTS & CACHE ---
@@ -16,7 +17,6 @@ PARAMS = {
     'Trucks': {'factor': 0.35,  'multiplier': 1.0, 'weight': 10.875}
 }
 
-# Cache the coordinates so the app is instantly fast for everyone
 @st.cache_data
 def get_coords_cache():
     return {
@@ -197,11 +197,18 @@ def get_coords_cache():
 coords_cache = get_coords_cache()
 geolocator = Nominatim(user_agent="logistics_carbon_calculator")
 
-def get_coordinates(loc_str):
+# We pass the status_text box in so the function can talk to the webpage
+def get_coordinates(loc_str, status_element):
     if pd.isna(loc_str): return None
     loc_str = str(loc_str).strip().upper()
     if loc_str in coords_cache: return coords_cache[loc_str]
+    
+    # Update the webpage with the city it is looking for
+    status_element.warning(f"🗺️ Map server searching for new location: {loc_str}... (Takes 1.5 seconds)")
+    
     try:
+        # We MUST sleep for 1.5 seconds so the map server doesn't ban us for going too fast
+        time.sleep(1.5)
         loc = geolocator.geocode(loc_str, timeout=5)
         if loc:
             coords_cache[loc_str] = (loc.longitude, loc.latitude)
@@ -216,9 +223,9 @@ def haversine(lon1, lat1, lon2, lat2):
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     return 2 * asin(sqrt(a)) * 3956
 
-def calculate_distance(loc1, loc2):
+def calculate_distance(loc1, loc2, status_element):
     if loc1 == loc2: return 10.0
-    c1, c2 = get_coordinates(loc1), get_coordinates(loc2)
+    c1, c2 = get_coordinates(loc1, status_element), get_coordinates(loc2, status_element)
     if c1 and c2: return haversine(c1[0], c1[1], c2[0], c2[1])
     return 100.0
 
@@ -233,95 +240,118 @@ uploaded_files = st.file_uploader("Upload your CSV files (Drag & Drop all at onc
 
 if uploaded_files:
     if st.button("🚀 Calculate Emissions"):
-        with st.spinner('Calculating distances and emissions... this may take a minute.'):
+        
+        # Create empty boxes on the webpage that we will update with live progress
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+        
+        unrealistic_files = [f for f in uploaded_files if "Unrealistic" in f.name]
+        data_files = [f for f in uploaded_files if "Unrealistic" not in f.name]
+        
+        status_text.info("Scanning for unrealistic routes...")
+        excluded_file_numbers = set()
+        for uf in unrealistic_files:
+            udf = pd.read_csv(uf, header=None)
+            header_idx = find_header_row(udf)
+            uf.seek(0)
+            udf = pd.read_csv(uf, skiprows=header_idx)
+            if 'FILE_NUMBER' in udf.columns:
+                excluded_file_numbers.update(udf['FILE_NUMBER'].astype(str).str.replace(r'\.0$', '', regex=True))
+        
+        master_data = []
+        
+        # Count total rows across all data files for the progress bar
+        total_rows = 0
+        for file in data_files:
+            temp_df_raw = pd.read_csv(file, header=None)
+            file.seek(0)
+            total_rows += len(pd.read_csv(file, skiprows=find_header_row(temp_df_raw)))
+            file.seek(0)
             
-            unrealistic_files = [f for f in uploaded_files if "Unrealistic" in f.name]
-            data_files = [f for f in uploaded_files if "Unrealistic" not in f.name]
+        rows_processed = 0
+
+        for file in data_files:
+            fname_upper = file.name.upper()
+            export_import = "Export" if "EXPORT" in fname_upper else "Import" if "IMPORT" in fname_upper else "N/A"
+            container_type = "FCL" if "FCL" in fname_upper else "LCL" if "LCL" in fname_upper else "N/A"
             
-            excluded_file_numbers = set()
-           for uf in unrealistic_files:
-                udf = pd.read_csv(uf, header=None)
-                header_idx = find_header_row(udf)
-                uf.seek(0)
-                udf = pd.read_csv(uf, skiprows=header_idx)
-                if 'FILE_NUMBER' in udf.columns:
-                    excluded_file_numbers.update(udf['FILE_NUMBER'].astype(str).str.replace(r'\.0$', '', regex=True))
+            if "FLIGHTS" in fname_upper: shipment_type = "Air"
+            elif "TRUCK" in fname_upper: shipment_type = "Trucks"
+            else: shipment_type = "Ocean"
             
-            master_data = []
+            p = PARAMS[shipment_type]
+            df_raw = pd.read_csv(file, header=None)
+            file.seek(0)
+            df = pd.read_csv(file, skiprows=find_header_row(df_raw))
             
-            for file in data_files:
-                fname_upper = file.name.upper()
-                export_import = "Export" if "EXPORT" in fname_upper else "Import" if "IMPORT" in fname_upper else "N/A"
-                container_type = "FCL" if "FCL" in fname_upper else "LCL" if "LCL" in fname_upper else "N/A"
+            for _, row in df.iterrows():
+                # Update progress bar
+                rows_processed += 1
+                if rows_processed % 5 == 0: # Update UI every 5 rows to stay fast
+                    progress_bar.progress(min(rows_processed / total_rows, 1.0))
+                    
+                file_num = str(row.get('FILE_NUMBER', '')).replace('.0', '')
+                if not file_num or str(file_num).lower() == 'nan' or file_num in excluded_file_numbers: 
+                    continue
+                    
+                pol = str(row.get('POL', '')).strip()
+                pod = str(row.get('POD', '')).strip()
+                dest = str(row.get('DESTINATION', '')).strip()
+                if dest.lower() == 'nan': dest = ''
                 
-                if "FLIGHTS" in fname_upper: shipment_type = "Air"
-                elif "TRUCK" in fname_upper: shipment_type = "Trucks"
-                else: shipment_type = "Ocean"
+                # Pass the status box down so it can report new cities
+                dist1 = calculate_distance(pol, pod, status_text)
+                dist2 = calculate_distance(pod, dest, status_text) if dest and dest != pod else 0
+                total_dist = dist1 + dist2
                 
-                p = PARAMS[shipment_type]
-                df_raw = pd.read_csv(file, header=None)
-                file.seek(0)
-                df = pd.read_csv(file, skiprows=find_header_row(df_raw))
+                route_str = f"{pol} ➔ {pod}" + (f" ➔ {dest}" if dest and dest != pod else "")
                 
-                for _, row in df.iterrows():
-                    file_num = str(row.get('FILE_NUMBER', '')).replace('.0', '')
-                    if not file_num or str(file_num).lower() == 'nan' or file_num in excluded_file_numbers: 
-                        continue
+                count = 1
+                if 'NO_OF_CONTAINERS' in row and pd.notna(row['NO_OF_CONTAINERS']):
+                    try: count = float(row['NO_OF_CONTAINERS'])
+                    except: pass
                         
-                    pol = str(row.get('POL', '')).strip()
-                    pod = str(row.get('POD', '')).strip()
-                    dest = str(row.get('DESTINATION', '')).strip()
-                    if dest.lower() == 'nan': dest = ''
-                    
-                    dist1 = calculate_distance(pol, pod)
-                    dist2 = calculate_distance(pod, dest) if dest and dest != pod else 0
-                    total_dist = dist1 + dist2
-                    
-                    route_str = f"{pol} ➔ {pod}" + (f" ➔ {dest}" if dest and dest != pod else "")
-                    
-                    count = 1
-                    if 'NO_OF_CONTAINERS' in row and pd.notna(row['NO_OF_CONTAINERS']):
-                        try: count = float(row['NO_OF_CONTAINERS'])
-                        except: pass
-                            
-                    co2e = count * p['weight'] * (total_dist * p['multiplier']) * p['factor']
-                    
-                    master_data.append({
-                        'Routes': route_str, 'Number of Containers': count, 'File Numbers': file_num,
-                        'Route Distance (mi)': total_dist, 'Export or Import': export_import,
-                        'Container Type': container_type, 'Shipment Type': shipment_type, 'Total Route CO2e': co2e
-                    })
+                co2e = count * p['weight'] * (total_dist * p['multiplier']) * p['factor']
+                
+                master_data.append({
+                    'Routes': route_str, 'Number of Containers': count, 'File Numbers': file_num,
+                    'Route Distance (mi)': total_dist, 'Export or Import': export_import,
+                    'Container Type': container_type, 'Shipment Type': shipment_type, 'Total Route CO2e': co2e
+                })
 
-            if master_data:
-                df_master = pd.DataFrame(master_data)
-                final_df = df_master.groupby(
-                    ['Routes', 'Export or Import', 'Container Type', 'Shipment Type', 'Route Distance (mi)']
-                ).agg({
-                    'Number of Containers': 'sum',
-                    'File Numbers': lambda x: ', '.join(x.unique()),
-                    'Total Route CO2e': 'sum'
-                }).reset_index()
+        # Clear the live status updates once finished
+        status_text.empty()
+        progress_bar.empty()
 
-                final_df['Route Distance (mi)'] = final_df['Route Distance (mi)'].round(1)
-                final_df['Total Route CO2e'] = final_df['Total Route CO2e'].round(0)
-                final_df = final_df.sort_values(by='Total Route CO2e', ascending=False)
-                
-                total_lbs = final_df['Total Route CO2e'].sum()
-                total_mt = total_lbs / 2204.62
-                
-                st.success("✅ Calculation Complete!")
-                col1, col2 = st.columns(2)
-                col1.metric("Total CO₂e (lbs)", f"{total_lbs:,.0f} lbs")
-                col2.metric("Total CO₂e (Metric Tons)", f"{total_mt:,.2f} MT")
-                
-                st.subheader("Route Breakdown")
-                st.dataframe(final_df)
-                
-                csv = final_df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Download Full Report (CSV)",
-                    data=csv,
-                    file_name='Consolidated_Global_Carbon_Footprint.csv',
-                    mime='text/csv',
-                )
-              
+        if master_data:
+            df_master = pd.DataFrame(master_data)
+            final_df = df_master.groupby(
+                ['Routes', 'Export or Import', 'Container Type', 'Shipment Type', 'Route Distance (mi)']
+            ).agg({
+                'Number of Containers': 'sum',
+                'File Numbers': lambda x: ', '.join(x.unique()),
+                'Total Route CO2e': 'sum'
+            }).reset_index()
+
+            final_df['Route Distance (mi)'] = final_df['Route Distance (mi)'].round(1)
+            final_df['Total Route CO2e'] = final_df['Total Route CO2e'].round(0)
+            final_df = final_df.sort_values(by='Total Route CO2e', ascending=False)
+            
+            total_lbs = final_df['Total Route CO2e'].sum()
+            total_mt = total_lbs / 2204.62
+            
+            st.success("✅ Calculation Complete!")
+            col1, col2 = st.columns(2)
+            col1.metric("Total CO₂e (lbs)", f"{total_lbs:,.0f} lbs")
+            col2.metric("Total CO₂e (Metric Tons)", f"{total_mt:,.2f} MT")
+            
+            st.subheader("Route Breakdown")
+            st.dataframe(final_df)
+            
+            csv = final_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Full Report (CSV)",
+                data=csv,
+                file_name='Consolidated_Global_Carbon_Footprint.csv',
+                mime='text/csv',
+            )
