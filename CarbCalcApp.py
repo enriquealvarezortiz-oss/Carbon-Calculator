@@ -239,9 +239,10 @@ if uploaded_files:
             data_files = [f for f in uploaded_files if "Unrealistic" not in f.name]
             
             excluded_file_numbers = set()
-            for uf in unrealistic_files:
+           for uf in unrealistic_files:
                 udf = pd.read_csv(uf, header=None)
                 header_idx = find_header_row(udf)
+                uf.seek(0)
                 udf = pd.read_csv(uf, skiprows=header_idx)
                 if 'FILE_NUMBER' in udf.columns:
                     excluded_file_numbers.update(udf['FILE_NUMBER'].astype(str).str.replace(r'\.0$', '', regex=True))
@@ -259,6 +260,7 @@ if uploaded_files:
                 
                 p = PARAMS[shipment_type]
                 df_raw = pd.read_csv(file, header=None)
+                file.seek(0)
                 df = pd.read_csv(file, skiprows=find_header_row(df_raw))
                 
                 for _, row in df.iterrows():
