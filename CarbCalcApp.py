@@ -7,17 +7,33 @@ from geopy.geocoders import Nominatim
 # --- PAGE CONFIGURATION & NAVY BLUE THEME ---
 st.set_page_config(page_title="Global Carbon Calculator", layout="wide")
 
-# Custom CSS for the Navy Blue background and white text
+# Custom CSS for the Navy Blue background and visible buttons
 st.markdown(
     """
     <style>
+    /* Main Navy Blue Background */
     .stApp {
-        background-color: #001f3f; /* Navy Blue */
+        background-color: #001f3f; 
     }
-    .stApp, .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp label, .stApp span {
+    /* Make standard text white */
+    .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp label {
         color: #F0F2F6 !important;
     }
-    /* Keeps the dataframe table readable */
+    /* Fix the drag-and-drop box text so it is visible on white */
+    [data-testid="stFileUploadDropzone"] * {
+        color: #001f3f !important;
+    }
+    /* Make all clickable buttons bold and navy so they stand out */
+    .stButton > button, .stDownloadButton > button {
+        color: #001f3f !important;
+        background-color: #FFFFFF !important;
+        font-weight: 800 !important;
+        border: 2px solid #FFFFFF !important;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        background-color: #e0e0e0 !important;
+    }
+    /* Keep the dataframe table readable */
     [data-testid="stDataFrame"] {
         background-color: white;
     }
@@ -36,7 +52,9 @@ PARAMS = {
     'Trucks': {'factor': 0.35,  'multiplier': 1.0, 'weight': 10.875}
 }
 
-@st.cache_data
+# @st.cache_resource is the secret! It makes this dictionary permanent and shared 
+# across all users. Any new city found is saved here for the lifetime of the server.
+@st.cache_resource
 def get_coords_cache():
     return {
         "ROTTERDAM, NL": (4.47, 51.92), "NEW YORK, NY": (-74.00, 40.71), "GEORGETOWN, TN": (-84.89, 35.29),
@@ -219,15 +237,17 @@ geolocator = Nominatim(user_agent="logistics_carbon_calculator")
 def get_coordinates(loc_str, status_element):
     if pd.isna(loc_str): return None
     loc_str = str(loc_str).strip().upper()
+    
+    # Check the permanent, shared dictionary first
     if loc_str in coords_cache: 
         return coords_cache[loc_str]
     
-    # Show the user what new city is being searched!
     status_element.warning(f"🗺️ Searching map server for new location: {loc_str}... (Takes 1.5 seconds to prevent bans)")
     try:
         time.sleep(1.5)
         loc = geolocator.geocode(loc_str, timeout=5)
         if loc:
+            # THIS IS WHERE IT SAVES FOR GOOD
             coords_cache[loc_str] = (loc.longitude, loc.latitude)
             return (loc.longitude, loc.latitude)
     except: pass
@@ -249,12 +269,11 @@ def calculate_distance(loc1, loc2, status_element):
         return haversine(c1[0], c1[1], c2[0], c2[1])
     return 100.0
 
-# BUG FIX: Perfectly mimics your local script by reading the raw lines first
 def find_header_row(file_bytes):
     file_bytes.seek(0)
     lines = file_bytes.readlines()
     file_bytes.seek(0)
-    for i, line in enumerate(lines[:15]): # Check first 15 lines
+    for i, line in enumerate(lines[:15]):
         line_str = line.decode('utf-8', errors='ignore').upper()
         if 'FILE_NUMBER' in line_str or 'POL' in line_str:
             return i
@@ -283,7 +302,6 @@ if uploaded_files:
         
         master_data = []
         
-        # Count total rows to make the progress bar highly accurate
         total_rows = 0
         for file in data_files:
             header_idx = find_header_row(file)
@@ -312,7 +330,6 @@ if uploaded_files:
             for _, row in df.iterrows():
                 rows_processed += 1
                 
-                # Show the user the exact row number it is currently calculating!
                 status_text.info(f"⚙️ Calculating row {rows_processed} of {total_rows}...")
                 
                 if rows_processed % 5 == 0 or rows_processed == total_rows: 
@@ -327,7 +344,6 @@ if uploaded_files:
                 dest = str(row.get('DESTINATION', '')).strip()
                 if dest.lower() == 'nan': dest = ''
                 
-                # If these are new, it will update the status_text to warn the user!
                 dist1 = calculate_distance(pol, pod, status_text)
                 dist2 = calculate_distance(pod, dest, status_text) if dest and dest != pod else 0
                 total_dist = dist1 + dist2
@@ -347,7 +363,6 @@ if uploaded_files:
                     'Container Type': container_type, 'Shipment Type': shipment_type, 'Total Route CO2e': co2e
                 })
 
-        # Calculation done! Clear the updates.
         status_text.empty()
         progress_bar.empty()
 
