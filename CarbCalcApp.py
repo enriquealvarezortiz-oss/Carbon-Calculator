@@ -22,27 +22,41 @@ st.markdown(
     }
     
     /* --- FILE UPLOADER CSS FIX --- */
-    /* Make the Drag & Drop Box White */
+    /* Make the overall Drag & Drop Box White */
     [data-testid="stFileUploadDropzone"] {
         background-color: #FFFFFF !important;
         border: 2px dashed #a0a0a0 !important;
         border-radius: 10px;
     }
-    /* Force every specific text element inside the box to be Navy Blue */
-    [data-testid="stFileUploadDropzone"] div,
-    [data-testid="stFileUploadDropzone"] span,
-    [data-testid="stFileUploadDropzone"] small,
-    [data-testid="stFileUploadDropzone"] p {
+    /* Make the normal text inside the dropzone Navy Blue */
+    [data-testid="stFileUploadDropzone"] div[data-testid="stText"] {
         color: #001f3f !important; 
-        font-weight: 900 !important;
     }
-    /* Force the upload cloud icon to be Navy Blue */
+    /* The main upload cloud icon above the button */
     [data-testid="stFileUploadDropzone"] svg {
         color: #001f3f !important;
         fill: #001f3f !important;
     }
     
-    /* --- BUTTONS --- */
+    /* --- SPECIFIC 'BROWSE FILES' BUTTON FIX --- */
+    /* Make the button itself Navy Blue */
+    [data-testid="stFileUploadDropzone"] button {
+        background-color: #001f3f !important;
+        border: 2px solid #001f3f !important;
+    }
+    /* Make the text and icon inside that specific button White */
+    [data-testid="stFileUploadDropzone"] button,
+    [data-testid="stFileUploadDropzone"] button * {
+        color: #FFFFFF !important;
+        fill: #FFFFFF !important;
+        font-weight: 900 !important;
+    }
+    [data-testid="stFileUploadDropzone"] button:hover {
+        background-color: #003366 !important;
+        border: 2px solid #003366 !important;
+    }
+    
+    /* --- OTHER BUTTONS --- */
     div[data-testid="stButton"] button, 
     div[data-testid="stDownloadButton"] button {
         background-color: #FFFFFF !important;
@@ -73,11 +87,10 @@ with col1:
     st.title("🌍 Vector Global Logistics Carbon Calculator")
     st.write("Upload your shipment CSVs to automatically calculate your global CO₂e emissions.")
 with col2:
-    # Directly attempts to load the image without checking the cloud path first
     try:
-        st.image("image_a2a07e.png", use_container_width=True)
+        st.image("Vector-2-color-blue.webp", use_container_width=True)
     except:
-        st.error("Logo file 'image_a2a07e.png' missing from GitHub.")
+        st.error("Logo file 'Vector-2-color-blue.webp' missing from GitHub.")
 
 # --- 1. CONSTANTS & CACHE ---
 PARAMS = {
