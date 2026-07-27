@@ -18,9 +18,19 @@ st.markdown(
     .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp label {
         color: #F0F2F6 !important;
     }
+    
+    /* Make the Drag & Drop Box White with Navy Blue Text */
+    [data-testid="stFileUploadDropzone"] {
+        background-color: #FFFFFF !important;
+        border: 2px dashed #a0a0a0 !important;
+        border-radius: 10px;
+    }
     [data-testid="stFileUploadDropzone"] * {
         color: #001f3f !important;
+        font-weight: 800 !important;
     }
+    
+    /* Buttons */
     div[data-testid="stButton"] button, 
     div[data-testid="stDownloadButton"] button {
         background-color: #FFFFFF !important;
@@ -35,6 +45,8 @@ st.markdown(
     div[data-testid="stDownloadButton"] button:hover {
         background-color: #e0e0e0 !important;
     }
+    
+    /* Dataframe Background */
     [data-testid="stDataFrame"] {
         background-color: white;
     }
@@ -53,7 +65,6 @@ with col2:
         st.image("image_a2a07e.png", use_container_width=True)
 
 # --- 1. CONSTANTS & CACHE ---
-# Added Rail parameters to accurately calculate train freight
 PARAMS = {
     'Ocean':  {'factor': 0.17,  'multiplier': 1.2, 'weight': 10.875},
     'Air':    {'factor': 2.394, 'multiplier': 1.5, 'weight': 1.0},
@@ -276,13 +287,25 @@ def calculate_distance(loc1, loc2, status_element):
 
 def find_header_row(file_bytes):
     file_bytes.seek(0)
-    lines = file_bytes.readlines()
-    file_bytes.seek(0)
-    for i, line in enumerate(lines[:15]):
-        line_str = line.decode('utf-8', errors='ignore').upper()
-        if 'FILE_NUMBER' in line_str or 'POL' in line_str:
-            return i
+    for i in range(15):
+        try:
+            file_bytes.seek(0)
+            df_temp = pd.read_csv(file_bytes, skiprows=i, nrows=0)
+            cols = [str(c).strip().upper().replace(' ', '_') for c in df_temp.columns]
+            
+            valid_headers = {'FILE_NUMBER', 'LOAD_NUMBER', 'SHIPMENT_ID', 'REFERENCE', 'ID', 'POL', 'ORIGIN', 'SHIP_FROM', 'POD', 'DESTINATION', 'SHIP_TO'}
+            if any(c in valid_headers for c in cols):
+                return i
+        except:
+            pass
     return 0
+
+# --- CALLBACK FUNCTION FOR THE RESET BUTTON ---
+def reset_app():
+    if "file_uploader_key" in st.session_state:
+        st.session_state["file_uploader_key"] += 1
+    else:
+        st.session_state["file_uploader_key"] = 1
 
 if "file_uploader_key" not in st.session_state:
     st.session_state["file_uploader_key"] = 0
@@ -292,7 +315,7 @@ uploaded_files = st.file_uploader(
     "Upload your CSV files (Drag & Drop all at once)", 
     type=['csv'], 
     accept_multiple_files=True,
-    key=st.session_state["file_uploader_key"]
+    key=str(st.session_state["file_uploader_key"]) 
 )
 
 if uploaded_files:
@@ -310,8 +333,11 @@ if uploaded_files:
         for uf in unrealistic_files:
             header_idx = find_header_row(uf)
             udf = pd.read_csv(uf, skiprows=header_idx)
-            if 'FILE_NUMBER' in udf.columns:
-                excluded_file_numbers.update(udf['FILE_NUMBER'].astype(str).str.replace(r'\.0$', '', regex=True))
+            udf.columns = [str(c).strip().upper().replace(' ', '_') for c in udf.columns]
+            
+            for col in ['FILE_NUMBER', 'LOAD_NUMBER', 'SHIPMENT_ID', 'REFERENCE', 'ID']:
+                if col in udf.columns:
+                    excluded_file_numbers.update(udf[col].astype(str).str.replace(r'\.0$', '', regex=True))
         
         master_data = []
         
@@ -326,8 +352,6 @@ if uploaded_files:
             total_rows = 1
             
         rows_processed = 0
-        
-        # This keeps flights across multiple files from being double counted
         processed_shipments = set()
 
         for file in data_files:
@@ -338,65 +362,72 @@ if uploaded_files:
             header_idx = find_header_row(file)
             df = pd.read_csv(file, skiprows=header_idx)
             
+            df.columns = [str(c).strip().upper().replace(' ', '_') for c in df.columns]
+            
             for _, row in df.iterrows():
                 rows_processed += 1
-                
                 status_text.info(f"⚙️ Calculating row {rows_processed} of {total_rows}...")
                 
                 if rows_processed % 5 == 0 or rows_processed == total_rows: 
                     progress_bar.progress(min(rows_processed / total_rows, 1.0))
                     
-                file_num = str(row.get('FILE_NUMBER', '')).replace('.0', '')
-                if not file_num or str(file_num).lower() == 'nan' or file_num in excluded_file_numbers: 
+                file_num = str(row.get('FILE_NUMBER', row.get('LOAD_NUMBER', row.get('SHIPMENT_ID', row.get('REFERENCE', row.get('ID', '')))))).replace('.0', '')
+                if not file_num or str(file_num).lower() == 'nan': 
+                    file_num = f"Row-{rows_processed}"
+                    
+                if file_num in excluded_file_numbers: 
                     continue
                     
-                pol = str(row.get('POL', '')).strip().upper()
-                pod = str(row.get('POD', '')).strip().upper()
-                dest = str(row.get('DESTINATION', '')).strip().upper()
-                vessel = str(row.get('MOTHER_VESSEL', '')).strip().upper()
-                carrier = str(row.get('CARRIER', '')).strip().upper()
+                pol = str(row.get('POL', row.get('ORIGIN', row.get('SHIP_FROM', '')))).strip().upper()
+                pod = str(row.get('POD', row.get('DESTINATION', row.get('SHIP_TO', '')))).strip().upper()
+                dest = str(row.get('DESTINATION', row.get('FINAL_DESTINATION', ''))).strip().upper()
+                vessel = str(row.get('MOTHER_VESSEL', row.get('TRAILER_NUMBER', row.get('TRUCK_NUMBER', '')))).strip().upper()
+                carrier = str(row.get('CARRIER', row.get('CARRIER_NAME', row.get('SCAC', '')))).strip().upper()
+                
+                if pol in ['', 'NAN'] and pod in ['', 'NAN']:
+                    continue
                 
                 if dest == 'NAN': dest = ''
+                if pod == dest: dest = ''
                 
-                # --- PREVENT DOUBLE COUNTING ---
-                # Creates a unique ID for this specific trip leg
                 shipment_id = (file_num, pol, pod)
                 if shipment_id in processed_shipments:
                     continue
                 processed_shipments.add(shipment_id)
                 
-                # --- INTELLIGENT ROW-BY-ROW SHIPMENT TYPE DETECTION ---
-                shipment_type = "Ocean" # Default Fallback
+                shipment_type = "Ocean" 
                 
-                # 1. Screen POL/POD columns for airport indicators
                 if any(x in pol for x in ["INTL", "APT", "AIRPORT"]) or any(x in pod for x in ["INTL", "APT", "AIRPORT"]):
                     shipment_type = "Air"
-                # 2. Screen MOTHER_VESSEL for standard airline flight numbers (e.g., AA123, DL1234)
                 elif re.search(r'^[A-Z]{2}\s?\d{3,4}$', vessel):
                     shipment_type = "Air"
-                # 3. Screen Carrier column for standard air freight keywords
                 elif any(kw in carrier for kw in ["AIRLINE", "AIRWAYS", "AVIATION", "FLIGHT"]):
                     shipment_type = "Air"
-                # 4. Secondary fallback looking at file names
                 elif "FLIGHT" in fname_upper or "AIR" in fname_upper:
                     shipment_type = "Air"
-                # 5. Screen for Truck and Rail
-                elif "TRUCK" in fname_upper or "TRUCK" in carrier:
+                elif any(kw in carrier for kw in ["TRUCK", "LTL", "FTL", "MOTOR", "ROAD", "HIGHWAY", "CARTAGE"]):
                     shipment_type = "Trucks"
-                elif "RAIL" in fname_upper or "RAIL" in carrier or "TRAIN" in carrier:
+                elif any(kw in vessel for kw in ["TRUCK", "LTL", "FTL"]):
+                    shipment_type = "Trucks"
+                elif any(kw in fname_upper for kw in ["TRUCK", "LTL", "FTL", "ROAD"]):
+                    shipment_type = "Trucks"
+                elif any(kw in fname_upper for kw in ["RAIL", "TRAIN"]) or any(kw in carrier for kw in ["RAIL", "TRAIN", "BNSF", "PACIFIC"]):
                     shipment_type = "Rail"
                 
                 p = PARAMS[shipment_type]
                 
                 dist1 = calculate_distance(pol, pod, status_text)
-                dist2 = calculate_distance(pod, dest, status_text) if dest and dest != pod else 0
+                dist2 = calculate_distance(pod, dest, status_text) if dest else 0
                 total_dist = dist1 + dist2
                 
-                route_str = f"{pol} ➔ {pod}" + (f" ➔ {dest}" if dest and dest != pod else "")
+                route_str = f"{pol} ➔ {pod}" + (f" ➔ {dest}" if dest else "")
                 
                 count = 1
                 if 'NO_OF_CONTAINERS' in row and pd.notna(row['NO_OF_CONTAINERS']):
                     try: count = float(row['NO_OF_CONTAINERS'])
+                    except: pass
+                elif 'QTY' in row and pd.notna(row['QTY']):
+                    try: count = float(row['QTY'])
                     except: pass
                         
                 co2e = count * p['weight'] * (total_dist * p['multiplier']) * p['factor']
@@ -444,13 +475,9 @@ if uploaded_files:
             )
 
             st.markdown("---")
-            if st.button("🔄 Calculate New Shipments"):
-                st.session_state["file_uploader_key"] += 1
-                st.rerun()
+            st.button("🔄 Calculate New Shipments", on_click=reset_app, key="reset_success")
                 
         else:
             st.warning("No valid routes were found in the uploaded files. Check your CSVs to make sure they aren't empty!")
             st.markdown("---")
-            if st.button("🔄 Calculate New Shipments"):
-                st.session_state["file_uploader_key"] += 1
-                st.rerun()
+            st.button("🔄 Calculate New Shipments", on_click=reset_app, key="reset_warning")
