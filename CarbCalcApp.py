@@ -360,6 +360,7 @@ if uploaded_files:
         
         for uf in unrealistic_files:
             header_idx = find_header_row(uf)
+            uf.seek(0)
             udf = pd.read_csv(uf, skiprows=header_idx)
             udf.columns = [str(c).strip().upper().replace(' ', '_') for c in udf.columns]
             
@@ -372,6 +373,7 @@ if uploaded_files:
         total_rows = 0
         for file in data_files:
             header_idx = find_header_row(file)
+            file.seek(0)
             df_temp = pd.read_csv(file, skiprows=header_idx)
             total_rows += len(df_temp)
             file.seek(0)
@@ -388,6 +390,7 @@ if uploaded_files:
             container_type = "FCL" if "FCL" in fname_upper else "LCL" if "LCL" in fname_upper else "N/A"
             
             header_idx = find_header_row(file)
+            file.seek(0)
             df = pd.read_csv(file, skiprows=header_idx)
             
             df.columns = [str(c).strip().upper().replace(' ', '_') for c in df.columns]
