@@ -3,9 +3,10 @@ import pandas as pd
 import time
 from math import radians, cos, sin, asin, sqrt
 from geopy.geocoders import Nominatim
+import os
 
 # --- PAGE CONFIGURATION & NAVY BLUE THEME ---
-st.set_page_config(page_title="Global Carbon Calculator", layout="wide")
+st.set_page_config(page_title="Vector Global Carbon Calculator", layout="wide")
 
 # Custom CSS for the Navy Blue background and visible buttons
 st.markdown(
@@ -23,14 +24,16 @@ st.markdown(
     [data-testid="stFileUploadDropzone"] * {
         color: #001f3f !important;
     }
-    /* Make all clickable buttons bold and navy so they stand out */
-    .stButton > button, .stDownloadButton > button {
-        color: #001f3f !important;
+    /* Force all buttons to have a white background and NAVY text */
+    button {
         background-color: #FFFFFF !important;
-        font-weight: 800 !important;
         border: 2px solid #FFFFFF !important;
     }
-    .stButton > button:hover, .stDownloadButton > button:hover {
+    button p, button span, button div {
+        color: #001f3f !important;
+        font-weight: 800 !important;
+    }
+    button:hover {
         background-color: #e0e0e0 !important;
     }
     /* Keep the dataframe table readable */
@@ -42,8 +45,14 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.title("🌍 Global Logistics Carbon Calculator")
-st.write("Upload your shipment CSVs to automatically calculate your global CO₂e emissions.")
+# --- HEADER WITH LOGO ---
+col1, col2 = st.columns([4, 1]) 
+with col1:
+    st.title("🌍 Vector Global Logistics Carbon Calculator")
+    st.write("Upload your shipment CSVs to automatically calculate your global CO₂e emissions.")
+with col2:
+    if os.path.exists("image_a2a07e.png"):
+        st.image("image_a2a07e.png", use_container_width=True)
 
 # --- 1. CONSTANTS & CACHE ---
 PARAMS = {
@@ -52,8 +61,6 @@ PARAMS = {
     'Trucks': {'factor': 0.35,  'multiplier': 1.0, 'weight': 10.875}
 }
 
-# @st.cache_resource is the secret! It makes this dictionary permanent and shared 
-# across all users. Any new city found is saved here for the lifetime of the server.
 @st.cache_resource
 def get_coords_cache():
     return {
@@ -238,7 +245,6 @@ def get_coordinates(loc_str, status_element):
     if pd.isna(loc_str): return None
     loc_str = str(loc_str).strip().upper()
     
-    # Check the permanent, shared dictionary first
     if loc_str in coords_cache: 
         return coords_cache[loc_str]
     
@@ -247,7 +253,6 @@ def get_coordinates(loc_str, status_element):
         time.sleep(1.5)
         loc = geolocator.geocode(loc_str, timeout=5)
         if loc:
-            # THIS IS WHERE IT SAVES FOR GOOD
             coords_cache[loc_str] = (loc.longitude, loc.latitude)
             return (loc.longitude, loc.latitude)
     except: pass
@@ -279,8 +284,17 @@ def find_header_row(file_bytes):
             return i
     return 0
 
+# Initialize a session key so we can easily "reset" the uploader
+if "file_uploader_key" not in st.session_state:
+    st.session_state["file_uploader_key"] = 0
+
 # --- 2. USER INTERFACE ---
-uploaded_files = st.file_uploader("Upload your CSV files (Drag & Drop all at once)", type=['csv'], accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "Upload your CSV files (Drag & Drop all at once)", 
+    type=['csv'], 
+    accept_multiple_files=True,
+    key=st.session_state["file_uploader_key"]
+)
 
 if uploaded_files:
     if st.button("🚀 Calculate Emissions"):
@@ -395,8 +409,19 @@ if uploaded_files:
             st.download_button(
                 label="📥 Download Full Report (CSV)",
                 data=csv,
-                file_name='Consolidated_Global_Carbon_Footprint.csv',
+                file_name='Vector_Global_Carbon_Footprint.csv',
                 mime='text/csv',
             )
+
+            st.markdown("---")
+            if st.button("🔄 Calculate New Shipments"):
+                # By updating the key, Streamlit immediately forces the upload box to reset!
+                st.session_state["file_uploader_key"] += 1
+                st.rerun()
+                
         else:
             st.warning("No valid routes were found in the uploaded files. Check your CSVs to make sure they aren't empty!")
+            st.markdown("---")
+            if st.button("🔄 Calculate New Shipments"):
+                st.session_state["file_uploader_key"] += 1
+                st.rerun()
