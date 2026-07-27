@@ -12,25 +12,37 @@ st.set_page_config(page_title="Vector Global Carbon Calculator", layout="wide")
 st.markdown(
     """
     <style>
+    /* Main Navy Background */
     .stApp {
         background-color: #001f3f; 
     }
+    /* Standard Text */
     .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp label {
         color: #F0F2F6 !important;
     }
     
-    /* Make the Drag & Drop Box White with Navy Blue Text */
+    /* --- FILE UPLOADER CSS FIX --- */
+    /* Make the Drag & Drop Box White */
     [data-testid="stFileUploadDropzone"] {
         background-color: #FFFFFF !important;
         border: 2px dashed #a0a0a0 !important;
         border-radius: 10px;
     }
-    [data-testid="stFileUploadDropzone"] * {
+    /* Force every specific text element inside the box to be Navy Blue */
+    [data-testid="stFileUploadDropzone"] div,
+    [data-testid="stFileUploadDropzone"] span,
+    [data-testid="stFileUploadDropzone"] small,
+    [data-testid="stFileUploadDropzone"] p {
+        color: #001f3f !important; 
+        font-weight: 900 !important;
+    }
+    /* Force the upload cloud icon to be Navy Blue */
+    [data-testid="stFileUploadDropzone"] svg {
         color: #001f3f !important;
-        font-weight: 800 !important;
+        fill: #001f3f !important;
     }
     
-    /* Buttons */
+    /* --- BUTTONS --- */
     div[data-testid="stButton"] button, 
     div[data-testid="stDownloadButton"] button {
         background-color: #FFFFFF !important;
@@ -61,8 +73,11 @@ with col1:
     st.title("🌍 Vector Global Logistics Carbon Calculator")
     st.write("Upload your shipment CSVs to automatically calculate your global CO₂e emissions.")
 with col2:
-    if os.path.exists("image_a2a07e.png"):
+    # Directly attempts to load the image without checking the cloud path first
+    try:
         st.image("image_a2a07e.png", use_container_width=True)
+    except:
+        st.error("Logo file 'image_a2a07e.png' missing from GitHub.")
 
 # --- 1. CONSTANTS & CACHE ---
 PARAMS = {
