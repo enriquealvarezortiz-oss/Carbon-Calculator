@@ -1,42 +1,40 @@
 import streamlit as st
 import pandas as pd
 import time
+import re
+import os
 from math import radians, cos, sin, asin, sqrt
 from geopy.geocoders import Nominatim
-import os
 
 # --- PAGE CONFIGURATION & NAVY BLUE THEME ---
 st.set_page_config(page_title="Vector Global Carbon Calculator", layout="wide")
 
-# Custom CSS for the Navy Blue background and visible buttons
 st.markdown(
     """
     <style>
-    /* Main Navy Blue Background */
     .stApp {
         background-color: #001f3f; 
     }
-    /* Make standard text white */
     .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6, .stApp label {
         color: #F0F2F6 !important;
     }
-    /* Fix the drag-and-drop box text so it is visible on white */
     [data-testid="stFileUploadDropzone"] * {
         color: #001f3f !important;
     }
-    /* Force all buttons to have a white background and NAVY text */
-    button {
+    div[data-testid="stButton"] button, 
+    div[data-testid="stDownloadButton"] button {
         background-color: #FFFFFF !important;
         border: 2px solid #FFFFFF !important;
     }
-    button p, button span, button div {
+    div[data-testid="stButton"] button *, 
+    div[data-testid="stDownloadButton"] button * {
         color: #001f3f !important;
-        font-weight: 800 !important;
+        font-weight: 900 !important;
     }
-    button:hover {
+    div[data-testid="stButton"] button:hover, 
+    div[data-testid="stDownloadButton"] button:hover {
         background-color: #e0e0e0 !important;
     }
-    /* Keep the dataframe table readable */
     [data-testid="stDataFrame"] {
         background-color: white;
     }
@@ -55,10 +53,12 @@ with col2:
         st.image("image_a2a07e.png", use_container_width=True)
 
 # --- 1. CONSTANTS & CACHE ---
+# Added Rail parameters to accurately calculate train freight
 PARAMS = {
     'Ocean':  {'factor': 0.17,  'multiplier': 1.2, 'weight': 10.875},
     'Air':    {'factor': 2.394, 'multiplier': 1.5, 'weight': 1.0},
-    'Trucks': {'factor': 0.35,  'multiplier': 1.0, 'weight': 10.875}
+    'Trucks': {'factor': 0.35,  'multiplier': 1.0, 'weight': 10.875},
+    'Rail':   {'factor': 0.04,  'multiplier': 1.0, 'weight': 10.875} 
 }
 
 @st.cache_resource
@@ -284,7 +284,6 @@ def find_header_row(file_bytes):
             return i
     return 0
 
-# Initialize a session key so we can easily "reset" the uploader
 if "file_uploader_key" not in st.session_state:
     st.session_state["file_uploader_key"] = 0
 
@@ -327,17 +326,15 @@ if uploaded_files:
             total_rows = 1
             
         rows_processed = 0
+        
+        # This keeps flights across multiple files from being double counted
+        processed_shipments = set()
 
         for file in data_files:
             fname_upper = file.name.upper()
             export_import = "Export" if "EXPORT" in fname_upper else "Import" if "IMPORT" in fname_upper else "N/A"
             container_type = "FCL" if "FCL" in fname_upper else "LCL" if "LCL" in fname_upper else "N/A"
             
-            if "FLIGHTS" in fname_upper: shipment_type = "Air"
-            elif "TRUCK" in fname_upper: shipment_type = "Trucks"
-            else: shipment_type = "Ocean"
-            
-            p = PARAMS[shipment_type]
             header_idx = find_header_row(file)
             df = pd.read_csv(file, skiprows=header_idx)
             
@@ -353,10 +350,43 @@ if uploaded_files:
                 if not file_num or str(file_num).lower() == 'nan' or file_num in excluded_file_numbers: 
                     continue
                     
-                pol = str(row.get('POL', '')).strip()
-                pod = str(row.get('POD', '')).strip()
-                dest = str(row.get('DESTINATION', '')).strip()
-                if dest.lower() == 'nan': dest = ''
+                pol = str(row.get('POL', '')).strip().upper()
+                pod = str(row.get('POD', '')).strip().upper()
+                dest = str(row.get('DESTINATION', '')).strip().upper()
+                vessel = str(row.get('MOTHER_VESSEL', '')).strip().upper()
+                carrier = str(row.get('CARRIER', '')).strip().upper()
+                
+                if dest == 'NAN': dest = ''
+                
+                # --- PREVENT DOUBLE COUNTING ---
+                # Creates a unique ID for this specific trip leg
+                shipment_id = (file_num, pol, pod)
+                if shipment_id in processed_shipments:
+                    continue
+                processed_shipments.add(shipment_id)
+                
+                # --- INTELLIGENT ROW-BY-ROW SHIPMENT TYPE DETECTION ---
+                shipment_type = "Ocean" # Default Fallback
+                
+                # 1. Screen POL/POD columns for airport indicators
+                if any(x in pol for x in ["INTL", "APT", "AIRPORT"]) or any(x in pod for x in ["INTL", "APT", "AIRPORT"]):
+                    shipment_type = "Air"
+                # 2. Screen MOTHER_VESSEL for standard airline flight numbers (e.g., AA123, DL1234)
+                elif re.search(r'^[A-Z]{2}\s?\d{3,4}$', vessel):
+                    shipment_type = "Air"
+                # 3. Screen Carrier column for standard air freight keywords
+                elif any(kw in carrier for kw in ["AIRLINE", "AIRWAYS", "AVIATION", "FLIGHT"]):
+                    shipment_type = "Air"
+                # 4. Secondary fallback looking at file names
+                elif "FLIGHT" in fname_upper or "AIR" in fname_upper:
+                    shipment_type = "Air"
+                # 5. Screen for Truck and Rail
+                elif "TRUCK" in fname_upper or "TRUCK" in carrier:
+                    shipment_type = "Trucks"
+                elif "RAIL" in fname_upper or "RAIL" in carrier or "TRAIN" in carrier:
+                    shipment_type = "Rail"
+                
+                p = PARAMS[shipment_type]
                 
                 dist1 = calculate_distance(pol, pod, status_text)
                 dist2 = calculate_distance(pod, dest, status_text) if dest and dest != pod else 0
@@ -415,7 +445,6 @@ if uploaded_files:
 
             st.markdown("---")
             if st.button("🔄 Calculate New Shipments"):
-                # By updating the key, Streamlit immediately forces the upload box to reset!
                 st.session_state["file_uploader_key"] += 1
                 st.rerun()
                 
